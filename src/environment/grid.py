@@ -47,14 +47,6 @@ class GridMap:
             return True
         return self._grid[pos] in (self.OBSTACLE, self.NO_FLY)
 
-    def is_route_valid(self, route: List[Position]) -> bool:
-        """Return True if every position in route is traversable."""
-        for pos in route:
-            if self.is_constrained(pos):
-                return False
-        return True
-
-
     def add_obstacle(self, pos: Position):
         """Mark pos as an obstacle (no-op if out-of-bounds)."""
         if self.in_bounds(pos):
