@@ -1,69 +1,40 @@
-"""Small grid utilities for route planning.
-
-All coordinates in GridMap are zero-indexed and follow the format (row, col),
-where (0, 0) refers to the top-left cell of the environment grid.
-"""
-
-from typing import Tuple, List
+from typing import Tuple
 import numpy as np
 
-Position = Tuple[int, int]  # (row, col)
-
+Position = Tuple[int, int, int]  # (x, y, z)
 
 class GridMap:
-    """Minimal grid holding cell states (FREE, OBSTACLE, NO_FLY).
-
-    Stores environment constraints only; planning lives elsewhere.
-    """
-
-    # Cell state constants
     FREE = 0
     OBSTACLE = 1
     NO_FLY = 2
 
-    def __init__(self, rows: int, cols: int):
-        self.rows = rows
-        self.cols = cols
-        self._grid = np.zeros((rows, cols), dtype=int)
-
-    
-    
-    
+    def __init__(self, x_size: int, y_size: int, z_size: int):
+        self.x_size = x_size
+        self.y_size = y_size
+        self.z_size = z_size
+        self._grid = np.zeros((x_size, y_size, z_size), dtype=int)
 
     def in_bounds(self, pos: Position) -> bool:
-        """True if pos is inside the grid."""
-        r, c = pos
-        return 0 <= r < self.rows and 0 <= c < self.cols
+        x, y, z = pos
+        return (
+            0 <= x < self.x_size and
+            0 <= y < self.y_size and
+            0 <= z < self.z_size
+        )
 
     def is_traversable(self, pos: Position) -> bool:
-        """True if pos is in bounds and marked FREE."""
-        if not self.in_bounds(pos):
-            return False
-        return self._grid[pos] == self.FREE
+        return self.in_bounds(pos) and self._grid[pos] == self.FREE
 
     def is_constrained(self, pos: Position) -> bool:
-        """True if pos is obstacle/no-fly or out-of-bounds."""
-        if not self.in_bounds(pos):
-            return True
-        return self._grid[pos] in (self.OBSTACLE, self.NO_FLY)
+        return not self.in_bounds(pos) or self._grid[pos] != self.FREE
 
     def add_obstacle(self, pos: Position):
-        """Mark pos as an obstacle (no-op if out-of-bounds)."""
         if self.in_bounds(pos):
             self._grid[pos] = self.OBSTACLE
 
     def add_no_fly_zone(self, pos: Position):
-        """Mark pos as a no-fly zone (no-op if out-of-bounds)."""
         if self.in_bounds(pos):
             self._grid[pos] = self.NO_FLY
 
-    def clear_cell(self, pos: Position):
-        """Clear constraints at pos (make it FREE)."""
-        if self.in_bounds(pos):
-            self._grid[pos] = self.FREE
-
-
-
     def snapshot(self) -> np.ndarray:
-        """Return a safe copy of the internal grid array."""
         return self._grid.copy()

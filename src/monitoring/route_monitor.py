@@ -1,7 +1,3 @@
-"""
-Monitors an executing mission for route invalidation.
-"""
-
 from typing import List, Optional
 
 from src.environment.grid import GridMap, Position
@@ -17,6 +13,7 @@ class RouteMonitor:
 
     def __init__(self, env: GridMap):
         self.validator = RouteValidator(env)
+        self.env = env
 
     def validate_remaining_route(
         self, executor: MissionExecutor
@@ -26,19 +23,21 @@ class RouteMonitor:
             return None
 
         print("🔍 Validating remaining route...")
-        remaining_route: List[Position] = executor.route[executor.index :]
-        return self.validator.validate(remaining_route)
+        remaining_route = executor.route[executor.index:]
+        result = self.validator.validate(remaining_route)
 
-    def abort_if_invalid(self, executor: MissionExecutor) -> bool:
-        result = self.validate_remaining_route(executor)
+        if result.valid:
+            print("✅ Remaining route: VALID")
+        else:
+            print(
+                f"❌ Remaining route: INVALID "
+                f"({result.reason.value} at {result.failing_position})"
+            )
 
-        if result is None or result.valid:
-            return False
+        return result
 
-        print(
-            f"❌ Route invalid: {result.reason} "
-            f"at {result.failing_position}"
-        )
 
-        executor.abort(reason=result.reason.value)
-        return True
+    def current_position_invalid(self, executor: MissionExecutor) -> bool:
+        """Hard safety check: current voxel must be valid."""
+        pos = executor.current_position()
+        return self.env.is_constrained(pos)
