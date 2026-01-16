@@ -1,5 +1,5 @@
 from src.environment.grid import GridMap
-from src.environment.constraints import add_rectangular_no_fly_zone
+from src.environment.constraints import add_cuboid_no_fly_zone
 from src.planner.planner import GridPlanner
 from src.validation.route_validator import RouteValidator
 from src.decision.preflight_checker import PreflightChecker, PreflightDecision
@@ -11,28 +11,34 @@ from src.recovery.replanner import Replanner
 
 def run_mission():
     # -----------------------------
-    # 1. Environment
+    # 1. 3D VOXEL ENVIRONMENT
     # -----------------------------
-    env = GridMap(20, 20)
-    add_rectangular_no_fly_zone(env, (8, 8), (12, 12))
+    env = GridMap(30, 30, 10)  # x, y, z
 
-    start = (0, 0)
-    goal = (19, 19)
+    # Add a 3D no-fly cuboid
+    add_cuboid_no_fly_zone(
+        env,
+        min_corner=(10, 10, 3),
+        max_corner=(15, 15, 7),
+    )
+
+    start = (0, 0, 2)
+    goal = (29, 29, 6)
     home = start
 
-    print("🌍 Environment initialized")
+    print("🌍 3D Voxel Environment initialized")
 
     # -----------------------------
-    # 2. Planning
+    # 2. 3D PLANNING
     # -----------------------------
     planner = GridPlanner(env)
     route = planner.plan(start, goal)
 
     # -----------------------------
-    # 3. Preflight
+    # 3. PREFLIGHT
     # -----------------------------
     validator = RouteValidator(env)
-    preflight = PreflightChecker(validator, max_route_length=100)
+    preflight = PreflightChecker(validator, max_route_length=300)
 
     result = preflight.check(route)
     if result.decision != PreflightDecision.GO:
@@ -42,7 +48,7 @@ def run_mission():
     print("✅ Preflight approved")
 
     # -----------------------------
-    # 4. Execution setup
+    # 4. EXECUTION SETUP
     # -----------------------------
     executor = MissionExecutor(route)
     monitor = RouteMonitor(env)
@@ -52,39 +58,52 @@ def run_mission():
     goal_blocked = False
 
     # -----------------------------
-    # 5. Mission loop
+    # 5. MISSION LOOP
     # -----------------------------
     while executor.status in (MissionStatus.RUNNING, MissionStatus.PAUSED):
+
         print(
             f"➡️ Step {step_counter} | "
             f"State={executor.status.value} | "
             f"Pos={executor.current_position()}"
         )
 
-        # 🚨 GUARANTEED CORE 8 TRIGGER
+        # Inject dynamic failure
         if step_counter == 8 and not goal_blocked:
             env.add_obstacle(goal)
             goal_blocked = True
-            print(f"🚧 Goal blocked at {goal}")
+            print(f"🚧 Goal voxel blocked at {goal}")
+
+            print("🚨 Immediate replan triggered due to goal blockage")
+            recovered = replanner.replan_or_abort(executor, goal)
+            if not recovered:
+                print("🛑 Immediate recovery failed")
+                break
+
+
+        # HARD SAFETY CHECK
+        if monitor.current_position_invalid(executor):
+            print("🛑 Current voxel invalid — aborting")
+            executor.abort(reason="current_voxel_invalid")
+            break
 
         validation = monitor.validate_remaining_route(executor)
 
         if validation and not validation.valid:
-            print("🚨 Route invalidated — Core 8 triggered")
+            print("🚨 Route invalidated — triggering replanning")
 
             recovered = replanner.replan_or_abort(executor, goal)
             if recovered:
-                print("🔁 Replanning succeeded")
                 continue
             else:
-                print("🛑 Mission aborted or returning home")
+                print("🛑 Recovery failed")
                 break
 
         executor.step()
         step_counter += 1
 
     # -----------------------------
-    # 6. Final state
+    # 6. FINAL STATE
     # -----------------------------
     print("🏁 Final Mission Status:", executor.status.value)
     if executor.status == MissionStatus.ABORTED:
