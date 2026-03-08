@@ -7,8 +7,10 @@ from src.environment.grid import GridMap, Position
 
 class GridPlanner:
 
-    def __init__(self, environment: GridMap):
+    def __init__(self, environment: GridMap, weather=None):
+
         self.env = environment
+        self.weather = weather
 
     def plan(self, start: Position, goal: Position) -> Optional[List[Position]]:
 
@@ -33,30 +35,13 @@ class GridPlanner:
                 if not self.env.is_traversable(neighbor):
                     continue
 
-                dx = neighbor[0] - current[0]
-                dy = neighbor[1] - current[1]
-                dz = neighbor[2] - current[2]
-
-                if dx != 0 and dy != 0:
-                    if not self.env.is_traversable((current[0] + dx, current[1], current[2])):
-                        continue
-                    if not self.env.is_traversable((current[0], current[1] + dy, current[2])):
-                        continue
-
-                if dx != 0 and dz != 0:
-                    if not self.env.is_traversable((current[0] + dx, current[1], current[2])):
-                        continue
-                    if not self.env.is_traversable((current[0], current[1], current[2] + dz)):
-                        continue
-
-                if dy != 0 and dz != 0:
-                    if not self.env.is_traversable((current[0], current[1] + dy, current[2])):
-                        continue
-                    if not self.env.is_traversable((current[0], current[1], current[2] + dz)):
-                        continue
-
                 step_cost = self._movement_cost(current, neighbor)
-                tentative_g = g_cost[current] + step_cost
+
+                weather_cost = 0
+                if self.weather:
+                    weather_cost = self.weather.cost(neighbor)
+
+                tentative_g = g_cost[current] + step_cost + weather_cost
 
                 if neighbor not in g_cost or tentative_g < g_cost[neighbor]:
 
@@ -69,7 +54,7 @@ class GridPlanner:
 
         return None
 
-    def _neighbors_3d(self, pos: Position):
+    def _neighbors_3d(self, pos):
 
         x, y, z = pos
         neighbors = []
@@ -88,7 +73,7 @@ class GridPlanner:
 
         return neighbors
 
-    def _movement_cost(self, a: Position, b: Position):
+    def _movement_cost(self, a, b):
 
         dx = abs(a[0] - b[0])
         dy = abs(a[1] - b[1])
@@ -96,7 +81,7 @@ class GridPlanner:
 
         return math.sqrt(dx*dx + dy*dy + dz*dz)
 
-    def _heuristic(self, a: Position, b: Position):
+    def _heuristic(self, a, b):
 
         return math.dist(a, b)
 
