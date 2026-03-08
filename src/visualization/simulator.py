@@ -107,7 +107,11 @@ class DroneSimulator:
 
         self.drone_actor=self.plotter.add_mesh(drone,color="red")
 
-        self.drone_actor.SetPosition(self.start[1],self.start[0],1)
+        self.drone_actor.SetPosition(
+            self.start[1],
+            self.start[0],
+            self.start[2] + 1
+        )
 
     def update_trail(self,point):
 
@@ -215,8 +219,17 @@ class DroneSimulator:
 
             next_pos=self.path[self.route_index+1]
 
-            start_xyz=np.array([self.current_pos[1],self.current_pos[0],1])
-            end_xyz=np.array([next_pos[1],next_pos[0],1])
+            start_xyz = np.array([
+                self.current_pos[1],
+                self.current_pos[0],
+                self.current_pos[2] + 1
+            ])
+
+            end_xyz = np.array([
+                next_pos[1],
+                next_pos[0],
+                next_pos[2] + 1
+            ])
 
             for i in range(15):
 
