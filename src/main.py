@@ -6,6 +6,7 @@ from src.validation.route_validator import RouteValidator
 from src.decision.preflight_checker import PreflightChecker, PreflightDecision
 
 from src.visualization.simulator import DroneSimulator
+from src.weather.weather_model import WeatherModel
 
 
 def main():
@@ -17,7 +18,10 @@ def main():
     start = (0,0,2)
     goal = (19,19,3)
 
-    planner = GridPlanner(env)
+    weather = WeatherModel()
+    weather.generate_weather(20,20)
+
+    planner = GridPlanner(env,weather)
 
     route = planner.plan(start, goal)
 
@@ -31,10 +35,11 @@ def main():
     result = preflight.check(route)
 
     if result.decision != PreflightDecision.GO:
-        print("❌ Preflight rejected:", result)
+        print("❌ Mission aborted before takeoff")
+        print("Reason:", result)
         return
 
-    print("✅ Preflight approved")
+    print("✅ Preflight approved — mission starting")
 
     sim = DroneSimulator(env, planner, start, goal)
 

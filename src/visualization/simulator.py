@@ -3,13 +3,10 @@ import pyvista as pv
 import random
 import time
 
-from src.environment.grid import GridMap
-from src.planner.planner import GridPlanner
-
 
 class DroneSimulator:
 
-    def __init__(self, env: GridMap, planner: GridPlanner, start, goal):
+    def __init__(self, env, planner, start, goal):
 
         self.env = env
         self.planner = planner
@@ -27,6 +24,8 @@ class DroneSimulator:
 
         self.trail_points = []
         self.trail_actor = None
+
+        self.rain_systems = []
 
     def build_ground(self):
 
@@ -85,10 +84,53 @@ class DroneSimulator:
                 if self.env.in_bounds((gx,gy,z)):
                     self.env.add_obstacle((gx,gy,z))
 
-    def draw_path(self):
+    def draw_weather(self):
 
-        if self.path is None:
+        if not hasattr(self.planner,"weather"):
             return
+
+        weather=self.planner.weather
+
+        if weather is None:
+            return
+
+        for cx,cy,radius,typ in weather.zones:
+
+            if typ!="rain":
+                continue
+
+            points=np.random.uniform(-radius,radius,(300,3))
+
+            points[:,0]+=cy
+            points[:,1]+=cx
+            points[:,2]=np.random.uniform(3,7,300)
+
+            rain=pv.PolyData(points)
+
+            self.plotter.add_mesh(
+                rain,
+                color="lightblue",
+                point_size=3,
+                render_points_as_spheres=True
+            )
+
+            self.rain_systems.append(rain)
+
+    def update_rain(self):
+
+        for rain in self.rain_systems:
+
+            pts=rain.points
+
+            pts[:,2]-=0.2
+
+            reset=pts[:,2]<0
+
+            pts[reset,2]=np.random.uniform(5,8,np.sum(reset))
+
+            rain.points=pts
+
+    def draw_path(self):
 
         pts=[[p[1],p[0],p[2]+1] for p in self.path]
 
@@ -113,6 +155,60 @@ class DroneSimulator:
             self.start[2] + 1
         )
 
+    def obstacle_ahead(self):
+
+        lookahead=2
+
+        for i in range(1,lookahead+1):
+
+            if self.route_index+i>=len(self.path):
+                return False
+
+            cell=self.path[self.route_index+i]
+
+            if not self.env.is_traversable(cell):
+                return True
+
+        return False
+
+    def enable_interaction(self):
+
+        def add_obstacle(point, picker=None):
+
+            if point is None:
+                return
+
+            world_x, world_y, world_z = point
+
+            grid_x = int(np.floor(world_y))
+            grid_y = int(np.floor(world_x))
+
+            grid_x = max(0, min(grid_x, self.env.x_size - 1))
+            grid_y = max(0, min(grid_y, self.env.y_size - 1))
+
+            print("🚧 Obstacle added:", (grid_x, grid_y))
+
+            height = 6
+
+            for z in range(height):
+                if self.env.in_bounds((grid_x, grid_y, z)):
+                    self.env.add_obstacle((grid_x, grid_y, z))
+
+            cube = pv.Box(
+                bounds=(
+                    grid_y - 0.5, grid_y + 0.5,
+                    grid_x - 0.5, grid_x + 0.5,
+                    0, height
+                )
+            )
+
+            self.plotter.add_mesh(cube, color="red")
+
+        self.plotter.enable_point_picking(
+            callback=add_obstacle,
+            show_message=False,
+            use_picker=True
+        )
     def update_trail(self,point):
 
         self.trail_points.append(point)
@@ -128,50 +224,13 @@ class DroneSimulator:
             line_width=3
         )
 
-    def enable_interaction(self):
-
-        def add_obstacle(point):
-
-            gx=int(np.floor(point[1]))
-            gy=int(np.floor(point[0]))
-
-            print("🚧 Obstacle added:",(gx,gy))
-
-            height = 6
-
-            for z in range(height):
-                if self.env.in_bounds((gx,gy,z)):
-                    self.env.add_obstacle((gx,gy,z))
-
-            cube=pv.Box(
-                bounds=(gy-0.5,gy+0.5,gx-0.5,gx+0.5,0,height)
-            )
-
-            self.plotter.add_mesh(cube,color="red")
-
-        self.plotter.enable_point_picking(callback=add_obstacle)
-
-    def obstacle_ahead(self):
-
-        lookahead = 2
-
-        for i in range(1,lookahead+1):
-
-            if self.route_index+i >= len(self.path):
-                return False
-
-            cell = self.path[self.route_index+i]
-
-            if not self.env.is_traversable(cell):
-                return True
-
-        return False
-
     def run(self):
 
         self.build_ground()
         self.generate_buildings()
         self.generate_trees()
+
+        self.draw_weather()
 
         self.path=self.planner.plan(self.start,self.goal)
 
@@ -236,6 +295,7 @@ class DroneSimulator:
                 interp=start_xyz+(end_xyz-start_xyz)*(i/15)
 
                 self.drone_actor.SetPosition(*interp)
+                self.update_rain()
 
                 self.plotter.update()
                 time.sleep(0.03)
