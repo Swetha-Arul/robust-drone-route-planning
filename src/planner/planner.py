@@ -7,10 +7,11 @@ from src.environment.grid import GridMap, Position
 
 class GridPlanner:
 
-    def __init__(self, environment: GridMap, weather=None):
+    def __init__(self, environment: GridMap, weather=None, payload_weight=0):
 
         self.env = environment
         self.weather = weather
+        self.payload_weight = payload_weight
 
     def plan(self, start: Position, goal: Position) -> Optional[List[Position]]:
 
@@ -79,10 +80,14 @@ class GridPlanner:
         dy = abs(a[1] - b[1])
         dz = abs(a[2] - b[2])
 
-        return math.sqrt(dx*dx + dy*dy + dz*dz)
+        distance = math.sqrt(dx*dx + dy*dy + dz*dz)
+
+        payload_factor = 1 + (self.payload_weight * 0.15)
+        altitude_factor = 1.8 if dz > 0 else 1
+
+        return distance * payload_factor * altitude_factor
 
     def _heuristic(self, a, b):
-
         return math.dist(a, b)
 
     def _reconstruct_path(self, came_from, current):

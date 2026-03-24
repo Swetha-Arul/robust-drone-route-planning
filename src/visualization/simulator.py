@@ -6,7 +6,7 @@ import time
 
 class DroneSimulator:
 
-    def __init__(self, env, planner, start, goal):
+    def __init__(self, env, planner, start, goal, battery_capacity):
 
         self.env = env
         self.planner = planner
@@ -27,6 +27,13 @@ class DroneSimulator:
 
         self.rain_systems = []
 
+        # 🔋 Battery system
+        self.battery_capacity = battery_capacity
+        self.battery_remaining = battery_capacity
+        self.payload_weight = planner.payload_weight
+
+    # ------------------- ENVIRONMENT -------------------
+
     def build_ground(self):
 
         rows, cols, _ = self.env._grid.shape
@@ -39,7 +46,12 @@ class DroneSimulator:
             j_resolution=rows
         )
 
-        self.plotter.add_mesh(plane, color="#1f2937", show_edges=True)
+        self.plotter.add_mesh(
+            plane,
+            color="#1f2937",
+            show_edges=True,
+            pickable=True
+        )
 
     def generate_buildings(self):
 
@@ -50,62 +62,64 @@ class DroneSimulator:
             x = random.randint(2, x_size-3)
             y = random.randint(2, y_size-3)
 
-            if (x,y)==(self.start[0],self.start[1]) or (x,y)==(self.goal[0],self.goal[1]):
+            if (x, y) == (self.start[0], self.start[1]) or (x, y) == (self.goal[0], self.goal[1]):
                 continue
 
-            height = random.randint(3,7)
+            height = random.randint(3, 7)
 
             building = pv.Box(
-                bounds=(y-0.5,y+0.5,x-0.5,x+0.5,0,height)
+                bounds=(y-0.5, y+0.5, x-0.5, x+0.5, 0, height)
             )
 
-            self.plotter.add_mesh(building,color="lightgray")
+            self.plotter.add_mesh(building, color="lightgray")
 
             for z in range(height+1):
-                self.env.add_obstacle((x,y,z))
+                self.env.add_obstacle((x, y, z))
 
     def generate_trees(self):
 
         for _ in range(20):
 
-            x=random.uniform(0,20)
-            y=random.uniform(0,20)
+            x = random.uniform(0, 20)
+            y = random.uniform(0, 20)
 
-            trunk=pv.Cylinder(center=(y,x,0.5),radius=0.1,height=1)
-            leaves=pv.Sphere(center=(y,x,1.5),radius=0.4)
+            trunk = pv.Cylinder(center=(y, x, 0.5), radius=0.1, height=1)
+            leaves = pv.Sphere(center=(y, x, 1.5), radius=0.4)
 
-            self.plotter.add_mesh(trunk,color="brown")
-            self.plotter.add_mesh(leaves,color="green")
+            self.plotter.add_mesh(trunk, color="brown")
+            self.plotter.add_mesh(leaves, color="green")
 
-            gx=int(x)
-            gy=int(y)
+            gx = int(x)
+            gy = int(y)
 
             for z in range(3):
-                if self.env.in_bounds((gx,gy,z)):
-                    self.env.add_obstacle((gx,gy,z))
+                if self.env.in_bounds((gx, gy, z)):
+                    self.env.add_obstacle((gx, gy, z))
+
+    # ------------------- WEATHER -------------------
 
     def draw_weather(self):
 
-        if not hasattr(self.planner,"weather"):
+        if not hasattr(self.planner, "weather"):
             return
 
-        weather=self.planner.weather
+        weather = self.planner.weather
 
         if weather is None:
             return
 
-        for cx,cy,radius,typ in weather.zones:
+        for cx, cy, radius, typ in weather.zones:
 
-            if typ!="rain":
+            if typ != "rain":
                 continue
 
-            points=np.random.uniform(-radius,radius,(300,3))
+            points = np.random.uniform(-radius, radius, (300, 3))
 
-            points[:,0]+=cy
-            points[:,1]+=cx
-            points[:,2]=np.random.uniform(3,7,300)
+            points[:, 0] += cy
+            points[:, 1] += cx
+            points[:, 2] = np.random.uniform(3, 7, 300)
 
-            rain=pv.PolyData(points)
+            rain = pv.PolyData(points)
 
             self.plotter.add_mesh(
                 rain,
@@ -120,21 +134,21 @@ class DroneSimulator:
 
         for rain in self.rain_systems:
 
-            pts=rain.points
+            pts = rain.points
+            pts[:, 2] -= 0.2
 
-            pts[:,2]-=0.2
+            reset = pts[:, 2] < 0
+            pts[reset, 2] = np.random.uniform(5, 8, np.sum(reset))
 
-            reset=pts[:,2]<0
+            rain.points = pts
 
-            pts[reset,2]=np.random.uniform(5,8,np.sum(reset))
-
-            rain.points=pts
+    # ------------------- PATH -------------------
 
     def draw_path(self):
 
-        pts=[[p[1],p[0],p[2]+1] for p in self.path]
+        pts = [[p[1], p[0], p[2]+1] for p in self.path]
 
-        spline=pv.Spline(np.array(pts),200)
+        spline = pv.Spline(np.array(pts), 200)
 
         self.plotter.add_mesh(
             spline,
@@ -143,11 +157,13 @@ class DroneSimulator:
             name="planned_path"
         )
 
+    # ------------------- DRONE -------------------
+
     def create_drone(self):
 
-        drone=pv.Sphere(radius=0.3)
+        drone = pv.Sphere(radius=0.3)
 
-        self.drone_actor=self.plotter.add_mesh(drone,color="red")
+        self.drone_actor = self.plotter.add_mesh(drone, color="green")
 
         self.drone_actor.SetPosition(
             self.start[1],
@@ -155,25 +171,42 @@ class DroneSimulator:
             self.start[2] + 1
         )
 
-    def obstacle_ahead(self):
+    # ------------------- ENERGY -------------------
 
-        lookahead=2
+    def compute_energy(self, a, b):
 
-        for i in range(1,lookahead+1):
+        dx = abs(a[0] - b[0])
+        dy = abs(a[1] - b[1])
+        dz = abs(a[2] - b[2])
 
-            if self.route_index+i>=len(self.path):
-                return False
+        distance = np.sqrt(dx*dx + dy*dy + dz*dz)
 
-            cell=self.path[self.route_index+i]
+        payload_factor = 1 + (self.payload_weight * 0.15)
+        altitude_factor = 1.8 if dz > 0 else 1
 
-            if not self.env.is_traversable(cell):
-                return True
+        return distance * payload_factor * altitude_factor
 
-        return False
+    def update_battery_display(self):
+
+        percentage = self.battery_remaining / self.battery_capacity
+
+        bar_length = 20
+        filled = int(bar_length * percentage)
+
+        bar = "█" * filled + "-" * (bar_length - filled)
+
+        print(f"🔋 Battery: [{bar}] {percentage*100:.1f}%")
+
+    # ------------------- INTERACTION -------------------
 
     def enable_interaction(self):
 
-        def add_obstacle(point, picker=None):
+        def add_obstacle(mesh):
+
+            if mesh is None:
+                return
+
+            point = self.plotter.pick_mouse_position()
 
             if point is None:
                 return
@@ -194,89 +227,123 @@ class DroneSimulator:
                 if self.env.in_bounds((grid_x, grid_y, z)):
                     self.env.add_obstacle((grid_x, grid_y, z))
 
-            cube = pv.Box(
-                bounds=(
-                    grid_y - 0.5, grid_y + 0.5,
-                    grid_x - 0.5, grid_x + 0.5,
-                    0, height
-                )
-            )
+            cube = pv.Box(bounds=(
+                grid_y - 0.5, grid_y + 0.5,
+                grid_x - 0.5, grid_x + 0.5,
+                0, height
+            ))
 
             self.plotter.add_mesh(cube, color="red")
 
-        self.plotter.enable_point_picking(
-            callback=add_obstacle,
-            show_message=False,
-            use_picker=True
-        )
-    def update_trail(self,point):
+        self.plotter.enable_mesh_picking(callback=add_obstacle)
+
+    # ------------------- TRAIL -------------------
+
+    def update_trail(self, point):
 
         self.trail_points.append(point)
 
-        trail=pv.PolyData(np.array(self.trail_points,dtype=np.float32))
+        trail = pv.PolyData(np.array(self.trail_points, dtype=np.float32))
 
         if self.trail_actor:
             self.plotter.remove_actor(self.trail_actor)
 
-        self.trail_actor=self.plotter.add_mesh(
+        self.trail_actor = self.plotter.add_mesh(
             trail,
             color="cyan",
             line_width=3
         )
+
+    # ------------------- OBSTACLE DETECTION -------------------
+
+    def obstacle_ahead(self):
+
+        lookahead = 2
+
+        for i in range(1, lookahead+1):
+
+            if self.route_index + i >= len(self.path):
+                return False
+
+            cell = self.path[self.route_index + i]
+
+            if not self.env.is_traversable(cell):
+                return True
+
+        return False
+
+    # ------------------- MAIN LOOP -------------------
 
     def run(self):
 
         self.build_ground()
         self.generate_buildings()
         self.generate_trees()
-
         self.draw_weather()
 
-        self.path=self.planner.plan(self.start,self.goal)
+        self.path = self.planner.plan(self.start, self.goal)
 
         if self.path is None:
             raise RuntimeError("No path")
 
-        self.route_index=0
+        self.route_index = 0
 
         self.draw_path()
-
         self.create_drone()
         self.enable_interaction()
 
         self.plotter.show(interactive_update=True)
 
-        while self.current_pos!=self.goal:
+        while self.current_pos != self.goal:
 
-            if self.route_index>=len(self.path)-1:
+            if self.route_index >= len(self.path) - 1:
                 break
 
-            # Detect obstacle ahead
             if self.obstacle_ahead():
 
                 print("🚨 Obstacle detected ahead")
-                print("⏸ Drone stopping for replanning")
+                print("⏸ Replanning...")
 
-                time.sleep(0.5)
-
-                new_path = self.planner.plan(self.current_pos,self.goal)
+                new_path = self.planner.plan(self.current_pos, self.goal)
 
                 if new_path is None:
                     print("❌ No alternate path")
                     break
 
-                print("🔁 New route calculated")
-
                 self.path = new_path
                 self.route_index = 0
-                self.current_pos = new_path[0]
 
                 self.plotter.remove_actor("planned_path")
                 self.draw_path()
 
                 continue
 
-            next_pos=self.path[self.route_index+1]
+            next_pos = self.path[self.route_index + 1]
+
+            # 🔋 ENERGY UPDATE
+            energy = self.compute_energy(self.current_pos, next_pos)
+            self.battery_remaining -= energy
+
+            self.update_battery_display()
+
+            # 🎨 COLOR CHANGE
+            ratio = self.battery_remaining / self.battery_capacity
+
+            if ratio > 0.6:
+                color = "green"
+            elif ratio > 0.3:
+                color = "yellow"
+            else:
+                color = "red"
+
+            self.drone_actor.GetProperty().SetColor(*pv.Color(color).float_rgb)
+
+            if self.battery_remaining <= 0:
+                print("🔴 Battery depleted! Drone stopped.")
+                break
+
+            if self.battery_remaining < 50:
+                print("⚠️ Low battery!")
 
             start_xyz = np.array([
                 self.current_pos[1],
@@ -292,7 +359,7 @@ class DroneSimulator:
 
             for i in range(15):
 
-                interp=start_xyz+(end_xyz-start_xyz)*(i/15)
+                interp = start_xyz + (end_xyz - start_xyz) * (i / 15)
 
                 self.drone_actor.SetPosition(*interp)
                 self.update_rain()
@@ -300,11 +367,11 @@ class DroneSimulator:
                 self.plotter.update()
                 time.sleep(0.03)
 
-            self.current_pos=next_pos
-            self.route_index+=1
+            self.current_pos = next_pos
+            self.route_index += 1
 
             self.update_trail(end_xyz)
 
-        print("✅ Goal reached")
+        print("✅ Simulation complete")
 
         self.plotter.show()
