@@ -7,18 +7,18 @@ from src.decision.preflight_checker import PreflightChecker, PreflightDecision
 
 from src.visualization.simulator import DroneSimulator
 from src.weather.weather_model import WeatherModel
+from src.battery.battery_model import BatteryModel
 
 
 def main():
 
     env = GridMap(20, 20, 10)
-
     add_cuboid_no_fly_zone(env, (10, 10, 2), (12, 12, 5))
 
     start = (0, 0, 2)
     goal = (19, 19, 3)
 
-    # 🔥 USER INPUT
+    # USER INPUT 
     try:
         payload_weight = float(input("📦 Enter payload weight (kg): "))
         battery_capacity = float(input("🔋 Enter battery capacity: "))
@@ -35,23 +35,34 @@ def main():
     print(f"📦 Payload: {payload_weight} kg")
     print(f"🔋 Battery: {battery_capacity}")
 
-    if payload_weight > 5:
-        print("⚠️ Heavy payload detected — higher energy consumption expected")
+    if payload_weight <= 5:
+        print("✅ Safe payload")
+    elif payload_weight <= 15:
+        print("⚠️ Medium payload — higher consumption")
+    else:
+        print("❌ Heavy payload — risk of failure")
 
-    # 🌧️ Weather
+    # Weather
     weather = WeatherModel()
     weather.generate_weather(20, 20)
 
-    # 🧠 Planner (energy-aware)
-    planner = GridPlanner(env, weather, payload_weight)
-
+    # Battery Model 
+    battery_model = BatteryModel()
+    #Planner
+    planner = GridPlanner(
+        env,
+        weather,
+        battery_model=battery_model,
+        payload_weight=payload_weight,
+        battery_capacity=battery_capacity
+    )
     route = planner.plan(start, goal)
 
     if route is None:
         print("❌ No path found")
         return
 
-    # ✅ Validation
+    # Validation
     validator = RouteValidator(env)
 
     preflight = PreflightChecker(
@@ -68,8 +79,19 @@ def main():
 
     print("\n✅ Preflight approved — mission starting\n")
 
-    # 🚁 Simulation with battery system
-    sim = DroneSimulator(env, planner, start, goal, battery_capacity)
+
+    #Simulator 
+    sim = DroneSimulator(
+        env,
+        planner,
+        start,
+        goal,
+        battery_model=battery_model,
+        payload_weight=payload_weight,
+        battery_capacity=battery_capacity,
+        weather=weather
+    )
+
     sim.run()
 
 

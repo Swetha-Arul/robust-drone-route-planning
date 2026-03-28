@@ -6,7 +6,17 @@ import time
 
 class DroneSimulator:
 
-    def __init__(self, env, planner, start, goal, battery_capacity):
+    def __init__(
+        self,
+        env,
+        planner,
+        start,
+        goal,
+        battery_model=None,
+        payload_weight=0.0,
+        battery_capacity=300.0,
+        weather=None
+    ):
 
         self.env = env
         self.planner = planner
@@ -21,16 +31,20 @@ class DroneSimulator:
 
         self.path = None
         self.route_index = 0
-
+        self.total_steps = 0
         self.trail_points = []
         self.trail_actor = None
 
         self.rain_systems = []
 
-        # 🔋 Battery system
+        self.battery_model = battery_model
+        self.payload_weight = payload_weight
         self.battery_capacity = battery_capacity
         self.battery_remaining = battery_capacity
-        self.payload_weight = planner.payload_weight
+        self.weather = weather
+
+        self.replan_penalty = 10.0
+
 
     # ------------------- ENVIRONMENT -------------------
 
@@ -83,7 +97,7 @@ class DroneSimulator:
             x = random.uniform(0, 20)
             y = random.uniform(0, 20)
 
-            trunk = pv.Cylinder(center=(y, x, 0.5), radius=0.1, height=1)
+            trunk = pv.Cylinder(center=(y, x, 0.5), radius=0.1, height=1, direction=(0,0,1))
             leaves = pv.Sphere(center=(y, x, 1.5), radius=0.4)
 
             self.plotter.add_mesh(trunk, color="brown")
@@ -171,21 +185,6 @@ class DroneSimulator:
             self.start[2] + 1
         )
 
-    # ------------------- ENERGY -------------------
-
-    def compute_energy(self, a, b):
-
-        dx = abs(a[0] - b[0])
-        dy = abs(a[1] - b[1])
-        dz = abs(a[2] - b[2])
-
-        distance = np.sqrt(dx*dx + dy*dy + dz*dz)
-
-        payload_factor = 1 + (self.payload_weight * 0.15)
-        altitude_factor = 1.8 if dz > 0 else 1
-
-        return distance * payload_factor * altitude_factor
-
     def update_battery_display(self):
 
         percentage = self.battery_remaining / self.battery_capacity
@@ -197,29 +196,19 @@ class DroneSimulator:
 
         print(f"🔋 Battery: [{bar}] {percentage*100:.1f}%")
 
-    # ------------------- INTERACTION -------------------
-
     def enable_interaction(self):
 
-        def add_obstacle(mesh):
-
-            if mesh is None:
-                return
-
-            point = self.plotter.pick_mouse_position()
+        def add_obstacle(point, picker=None):
 
             if point is None:
                 return
 
-            world_x, world_y, world_z = point
+            wx, wy, wz = point
 
-            grid_x = int(np.floor(world_y))
-            grid_y = int(np.floor(world_x))
+            grid_x = int(np.clip(round(wy), 0, self.env.x_size - 1))
+            grid_y = int(np.clip(round(wx), 0, self.env.y_size - 1))
 
-            grid_x = max(0, min(grid_x, self.env.x_size - 1))
-            grid_y = max(0, min(grid_y, self.env.y_size - 1))
-
-            print("🚧 Obstacle added:", (grid_x, grid_y))
+            print(f"🎯 Click: ({float(wx):.2f}, {float(wy):.2f}) → Grid {grid_x, grid_y}")
 
             height = 6
 
@@ -227,18 +216,21 @@ class DroneSimulator:
                 if self.env.in_bounds((grid_x, grid_y, z)):
                     self.env.add_obstacle((grid_x, grid_y, z))
 
-            cube = pv.Box(bounds=(
-                grid_y - 0.5, grid_y + 0.5,
-                grid_x - 0.5, grid_x + 0.5,
-                0, height
-            ))
+            # ✅ use Cube instead of Box to fixes recursion bug
+            cube = pv.Cube(
+                center=(grid_y, grid_x, height / 2),
+                x_length=1,
+                y_length=1,
+                z_length=height
+            )
 
             self.plotter.add_mesh(cube, color="red")
 
-        self.plotter.enable_mesh_picking(callback=add_obstacle)
-
-    # ------------------- TRAIL -------------------
-
+        self.plotter.enable_point_picking(
+            callback=add_obstacle,
+            show_message=False,
+            use_picker=True
+        )
     def update_trail(self, point):
 
         self.trail_points.append(point)
@@ -300,9 +292,17 @@ class DroneSimulator:
                 break
 
             if self.obstacle_ahead():
-
                 print("🚨 Obstacle detected ahead")
                 print("⏸ Replanning...")
+
+                self.battery_remaining -= self.replan_penalty
+
+                print(f"⚡ Replanning cost: {self.replan_penalty}")
+                self.update_battery_display()
+
+                if self.battery_remaining <= 0:
+                    print("🛑 Mission aborted: battery depleted during replanning")
+                    return
 
                 new_path = self.planner.plan(self.current_pos, self.goal)
 
@@ -319,14 +319,23 @@ class DroneSimulator:
                 continue
 
             next_pos = self.path[self.route_index + 1]
-
-            # 🔋 ENERGY UPDATE
-            energy = self.compute_energy(self.current_pos, next_pos)
+            if self.battery_model:
+                energy = self.battery_model.step_cost(
+                    self.current_pos,
+                    next_pos,
+                    self.payload_weight,
+                    self.weather
+                )
+            else:
+                energy = 0
             self.battery_remaining -= energy
 
+            self.total_steps += 1
+            print(f"📍 Step {self.total_steps} → {next_pos}")
+            print(f"⚡ Energy used: {energy:.2f}")
             self.update_battery_display()
 
-            # 🎨 COLOR CHANGE
+            # Colour drone based on battery level
             ratio = self.battery_remaining / self.battery_capacity
 
             if ratio > 0.6:
@@ -338,11 +347,11 @@ class DroneSimulator:
 
             self.drone_actor.GetProperty().SetColor(*pv.Color(color).float_rgb)
 
-            if self.battery_remaining <= 0:
-                print("🔴 Battery depleted! Drone stopped.")
-                break
+            if ratio < 0.1:
+                print("🛑 Mission aborted: battery critical")
+                return
 
-            if self.battery_remaining < 50:
+            if ratio < 0.3:
                 print("⚠️ Low battery!")
 
             start_xyz = np.array([
@@ -372,6 +381,8 @@ class DroneSimulator:
 
             self.update_trail(end_xyz)
 
-        print("✅ Simulation complete")
+        print("\n🏁 Mission Summary")
+        print(f"🔋 Final Battery: {self.battery_remaining:.2f} ({(self.battery_remaining/self.battery_capacity)*100:.1f}%)")
+        print("✅ Goal reached successfully")
 
         self.plotter.show()

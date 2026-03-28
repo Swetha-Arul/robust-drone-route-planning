@@ -6,12 +6,12 @@ from src.environment.grid import GridMap, Position
 
 
 class GridPlanner:
-
-    def __init__(self, environment: GridMap, weather=None, payload_weight=0):
-
-        self.env = environment
+    def __init__(self, env, weather=None, battery_model=None, payload_weight=0, battery_capacity=100):
+        self.env = env
         self.weather = weather
+        self.battery_model = battery_model
         self.payload_weight = payload_weight
+        self.battery_capacity = battery_capacity
 
     def plan(self, start: Position, goal: Position) -> Optional[List[Position]]:
 
@@ -43,6 +43,10 @@ class GridPlanner:
                     weather_cost = self.weather.cost(neighbor)
 
                 tentative_g = g_cost[current] + step_cost + weather_cost
+
+                # battery constraint check
+                if tentative_g > self.battery_capacity:
+                    continue
 
                 if neighbor not in g_cost or tentative_g < g_cost[neighbor]:
 
@@ -76,19 +80,36 @@ class GridPlanner:
 
     def _movement_cost(self, a, b):
 
+        if self.battery_model:
+            return self.battery_model.step_cost(
+                a,
+                b,
+                self.payload_weight,
+                self.weather
+            )
+
+        # fallback
+        dx = abs(a[0] - b[0])
+        dy = abs(a[1] - b[1])
+        dz = abs(a[2] - b[2])
+        return math.sqrt(dx*dx + dy*dy + dz*dz)
+    
+    def _heuristic(self, a, b):
+
         dx = abs(a[0] - b[0])
         dy = abs(a[1] - b[1])
         dz = abs(a[2] - b[2])
 
         distance = math.sqrt(dx*dx + dy*dy + dz*dz)
 
-        payload_factor = 1 + (self.payload_weight * 0.15)
-        altitude_factor = 1.8 if dz > 0 else 1
+        payload_factor = 1 + (self.payload_weight * 0.4)
+
+        if dz > 0:
+            altitude_factor = 2.5
+        else:
+            altitude_factor = 1.0
 
         return distance * payload_factor * altitude_factor
-
-    def _heuristic(self, a, b):
-        return math.dist(a, b)
 
     def _reconstruct_path(self, came_from, current):
 
