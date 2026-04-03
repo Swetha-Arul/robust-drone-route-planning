@@ -1,6 +1,10 @@
-# 🚁 Robust Drone Route Planning
+## Constraint Based Route Planning for Autonomous Drone Missions
 
-A constraint-based drone mission planner that prioritizes **robust, safe routes** over shortest-path solutions — navigating dynamic obstacles, no-fly zones, weather hazards, and battery constraints in a 3D grid environment.
+[![Python](https://img.shields.io/badge/Python-3.9%2B-blue)](https://python.org)
+[![PyVista](https://img.shields.io/badge/Visualization-PyVista-green)](https://pyvista.org)
+[![License](https://img.shields.io/github/license/swetha-arul/constraint-based-drone-route-planner)](LICENSE)
+
+A 3D constraint-based drone mission planner that prioritizes **safe, feasible routes** over shortest-path solutions — navigating dynamic obstacles, no-fly zones, weather hazards, and battery constraints in a 3D grid environment.
 
 ---
 
@@ -26,7 +30,7 @@ A constraint-based drone mission planner that prioritizes **robust, safe routes*
 ## 📁 Project Structure
 
 ```
-robust-drone-route-planning/
+constraint-based-drone-route-planner/
 ├── src/
 │   ├── main.py                        # Entry point — mission setup and orchestration
 │   ├── battery/
